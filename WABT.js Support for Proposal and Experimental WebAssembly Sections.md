@@ -1,0 +1,74 @@
+# WABT.js Support for Proposal and Experimental WebAssembly Sections
+
+## Overview of WABT.js (WebAssembly Binary Toolkit in JavaScript)
+
+WABT.js is a JavaScript port of the WebAssembly Binary Toolkit, offering tools like `wat2wasm` and `wasm2wat` for translating between WebAssembly text (WAT) and binary (WASM) formats. It aims to support WebAssembly’s evolving feature set via command-line flags (or equivalent API options) that enable experimental proposals (e.g., exceptions, threads, etc.). Below we summarize the compatibility of **WABT.js (latest version)** with various WebAssembly proposals and sections, highlighting **WAT → WASM assembly**, **WASM → WAT disassembly**, and how unknown or custom sections are handled.
+
+## Core and Mature Proposals (Fully Supported)
+
+**These features are enabled by default in WABT and WABT.js, and are supported for both assembling WAT and disassembling WASM:**
+
+* **Mutable Globals** – Import/export of mutable globals is stable. WABT can read/write these globals in both text and binary forms (enabled unless explicitly disabled). **WAT→WASM**: Accepts `(global (mut ...))` definitions; **WASM→WAT**: Outputs with `mut` keyword.
+* **Non-Trapping Float-to-Int** – Supported by default (with a `--disable-...` flag available). WABT can roundtrip these conversion opcodes reliably.
+* **Sign-Extension Operators** – Fully supported (enabled by default). Both text and binary formats are handled correctly.
+* **Multi-Value Returns** – Enabled by default (no flag needed). WABT supports functions and blocks returning multiple values in both WAT and WASM.
+* **Bulk Memory Operations** – Fully supported (enabled by default). Instructions like `memory.fill`, `memory.copy`, etc., roundtrip without issues.
+* **Reference Types (externref, funcref)** – Supported by default. WABT’s text reader/writer and binary parser handle `ref.func`, `externref`, etc., properly.
+* **SIMD (128-bit)** – Fully supported (enabled by default). WABT can assemble/disassemble vector types (`v128`) and SIMD instructions (e.g., `i32x4.add`).
+* **Multi-Memory** – Supported (flag `--enable-multi-memory` but **on by default** in latest WABT) for defining and using multiple memories. Recent updates ensured compliance with the upstream proposal.
+* **Extended Constant Expressions** – Supported (enabled by default). Allows using `global.get` in init expressions and other extended const ops. WABT added support for `global.get` in const expressions in v1.0.34.
+* **Tail Call** – Supported (flag `--enable-tail-call`). WABT can assemble and disassemble tail-call instructions (like `return_call`).
+* **Memory64 (64-bit Memories)** – **Partially supported:** Flag `--enable-memory64` is available and WABT can parse 64-bit memory indices in text/binary. Parsing and validation were improved in recent releases. **Note:** While core reading/writing works, execution in the interpreter is limited (no 64-bit address space simulation).
+* **Threads and Atomics** – **Partial support:** Flag `--enable-threads` enables parsing of shared memories and atomic instructions. WABT can roundtrip thread-related sections (e.g., atomics, shared memory indicators) in text and binary. Validation and interpretation are limited (e.g., `wasm-interp` might not execute atomics fully). Also, WABT’s C conversion (wasm2c) has only *partial* threads support.
+
+## Advanced Proposals and Experimental Features
+
+**These require explicit flags in WABT and have varying levels of support.** WABT.js inherits these capabilities, but some proposals are **not yet fully implemented or stable**:
+
+* **Exception Handling (EH)** – **Supported with caveats:** Use `--enable-exceptions` to handle exceptions (try/catch). WABT supports an older EH version (v2/v3). It can assemble WAT with `(try … (catch …))` blocks into a WASM **tag** section and opcodes, and disassemble them back to WAT. However, WABT does **not yet implement** the final *EH v4* changes. For example, the new `catch_all` validation rules weren’t initially enforced, and support for the latest spec revisions is lagging. **Summary:** Basic exception sections (tag section) roundtrip, but newest EH features may not parse/validate without errors.
+* **Garbage Collection (GC) & Typed Objects** – **Not fully supported:** GC and typed references (structs, arrays, etc. from the GC proposal) are behind `--enable-gc`, but WABT’s implementation is incomplete. As of early 2025, **function references** (part of GC’s type system) are still a work in progress. A user trying the Phase 5 function-references encountered errors with `call_ref` syntax changes, and a maintainer confirmed **“this proposal is not yet fully supported”**. Efforts are ongoing to add these features, but community contributions are needed. **Impact:** WABT.js cannot yet properly assemble the newest GC proposal WAT (e.g., struct types, new `ref` types) nor disassemble such WASM binaries. If these sections are present, WABT may error or output placeholder types.
+* **Typed Function References** – Overlaps with GC proposal; similarly incomplete. For example, multi-value `call_ref` and typed `ref.func` improvements are only partially handled. Expect errors or missing support for latest function-reference constructs (no full Phase 5 coverage yet).
+* **Module Linking Proposal** – **Not supported in text format:** Module linking (nested modules, imports of modules/instances, etc.) is not implemented in WABT’s WAT syntax and binary parser. There’s no `--enable-module-linking` flag, and no support for the `(module … (module $inner …))` text constructs from that proposal. As one maintainer mentioned, adding first-class module linking to WABT is “unlikely… anytime soon”. **WAT→WASM:** WABT.js cannot assemble module-linking sections; **WASM→WAT:** such binaries will either be rejected or only partially read (since unknown sections might just be treated as custom sections). **Workaround:** Use external tools (e.g., [`wasm-tools module-combiner`](https://github.com/fix-project/wasm-tools/tree/main/src/module-combiner) or component-model tooling like `jco`) for module linking or component model binaries.
+* **Component Model (Interfaces and Components)** – **Not supported:** The component model introduces a new binary format (`.wasm` vs `.wic` for components) with additional section types (e.g., canonical function sections, interface types). WABT does **not** recognize component-model sections. There is no support for the WIT interface types or the component syntax in WAT. **Attempting to use WABT.js on a component `.wasm`** (from the Component Model MVP) will likely result in errors or unrecognized section IDs. **Recommendation:** Use the Bytecode Alliance tools (such as `wit-component` or `jco`) for assembling/disassembling component model binaries, since WABT’s focus remains on core modules.
+* **Relaxed SIMD** – **Supported (text & binary):** Flag `--enable-relaxed-simd` covers the Relaxed SIMD proposal. WABT can roundtrip these operations (like relaxed lane operations). **Note:** Marked experimental – ensure the flag is set; otherwise those opcodes might be rejected.
+* **Custom Sections** – **Supported via Annotations:** WABT v1.0.34 introduced **custom-section annotations** in the text format. This means WABT.js can now include custom sections in WAT using the proposed `(section "name" "base64:...")` syntax and emit them when disassembling WASM. For example, a WASM with an unknown custom section will disassemble to `(module (section customName "base64:...") ...)`. Likewise, feeding that into `wat2wasm` recreates the section. **Outcome:** Arbitrary custom and experimental sections are preserved (no data loss) as long as they follow the annotation scheme. If a custom section isn’t recognized by WABT, it will be handled as opaque data with a base64 payload in WAT. This enables **lossless round-tripping of unknown sections** without errors. (Ensure to use the latest WABT.js build with this feature enabled.)
+* **Code Metadata** – **Convention support:** “Code metadata” refers to custom sections attached to instructions (a recent proposal for branch hints, etc.). WABT has an `--enable-code-metadata` flag (as seen in help text). This is very experimental; if used, WABT can emit the code metadata section as an annotation in WAT (likely similar to custom sections). However, this feature is not commonly used yet (the proposal is still being discussed), so treat it as a custom section use-case.
+* **Annotations (Custom Annotation Syntax)** – **Supported:** This proposal generalizes custom data in text form. WABT’s support (enabled by `--enable-annotations`) is primarily what allows the above custom sections and possibly other text annotations. By default, it’s **on** in WABT’s latest version. Thus WABT.js should accept and preserve annotated text (like `(;;@annot …)` or section annotations). This ensures non-standard sections or future experimental sections won’t cause errors but are retained as annotations.
+
+## Summary of Feature Compatibility
+
+Below is a breakdown of each notable proposal/section and WABT.js’s ability to assemble (`wat2wasm`) and disassemble (`wasm2wat`) it:
+
+* **Exception Handling (EH)**: *WAT→WASM:* **Partial** (older EH syntax works with `--enable-exceptions`); *WASM→WAT:* **Partial** (outputs try/catch but doesn’t support latest changes).  *(No full EH v4 support yet – may need updates or alternative toolchain for bleeding-edge EH.)*
+* **Garbage Collection (GC) & Typed References**: *WAT→WASM:* **Not yet** (no support for struct/array types in text); *WASM→WAT:* **Not fully** (may error or produce placeholder text).  *Binaryen or other tools are recommended until WABT catches up.*
+* **Typed Function References**: *WAT→WASM:* **Incomplete** (e.g., new `call_ref` changes aren’t recognized); *WASM→WAT:* **May fail** for updated binaries.  *Work in progress by contributors (expect improvements in future WABT versions).*
+* **Threads (Atomics)**: *WAT→WASM:* **Supported** with `--enable-threads` (shared memory, atomic ops); *WASM→WAT:* **Supported** (will list atomics, requires flag).  *Note: Validate with `--enable-threads` on both conversion directions to avoid errors.*
+* **SIMD (128-bit)**: *WAT↔WASM:* **Fully supported** (on by default).
+* **Relaxed SIMD**: *WAT↔WASM:* **Supported** (with flag).
+* **Tail Calls**: *WAT↔WASM:* **Supported** (with flag).
+* **Multi-Memory**: *WAT↔WASM:* **Supported** (with flag, likely on by default).
+* **Memory64 (64-bit)**: *WAT↔WASM:* **Mostly supported** (with flag) – text format uses `i64` for mem indices; binary supported.  *(Interpreter can’t truly allocate 2^64 but assembler/disassembler works.)*
+* **Extended Const**: *WAT↔WASM:* **Supported** (on by default) – e.g., `global.get` in element offsets.
+* **Bulk Memory, Multi-Value, Ref Types**: *WAT↔WASM:* **Fully supported** (all stable features).
+* **Module Linking**: *WAT↔WASM:* **Not supported**. WABT does not implement module-linking text or binary (beyond treating unknown sections as custom).  *Use component-model tools or the wasm-tools suite for this feature.*
+* **Component Model (Interfaces/WIT)**: *WAT↔WASM:* **Not supported**. WABT.js cannot parse or generate `.wasm` component files (with component sections); those aren’t core modules.  *Use Bytecode Alliance tools (e.g., `wit-bindgen`, `jco`) for components.*
+* **Custom Sections**: *WAT↔WASM:* **Supported** via annotation syntax. WABT preserves unknown sections as `(section "name" "base64:data")` in WAT and accepts that back in assembly.  *(This covers *known* experimental sections too – if WABT doesn’t have a dedicated implementation, it will fall back to treating them as custom.)*
+
+## Handling Unknown or Experimental Sections
+
+WABT.js is designed to **gracefully handle custom/unknown sections** by using the **annotations proposal**. As of v1.0.34, it can round-trip custom sections without dropping them. For non-standard experimental sections (e.g., if you have a WASM with a prototype section ID for a proposal WABT doesn’t support), WABT.js will not interpret it but will include it as an opaque custom section in the WAT output. Using `--ignore-custom-section-errors` ensures even truly unknown sections won’t stop disassembly. This means **WABT.js won’t error out**; instead, it will emit something like `(section "unknown" "base64:...")`, which you can reassemble later. This is very useful for tooling experimentation, albeit you lose human-readable detail for that section.
+
+## Alternatives and Workarounds
+
+For **unsupported features** (module linking, component model, full GC/function references), consider these approaches:
+
+* **Binaryen’s Toolchain**: Binaryen (a well-maintained WASM toolchain in C++) has up-to-date support for GC, exceptions v4, and more. Its `wasm-opt` and `wasm-dis` can handle most proposals. If WABT falls behind, using Binaryen’s tools or the reference interpreter might be better for certain proposals.
+* **Wasmtime’s `wasm-tools`**: The Wasm Tools project (in Rust) provides component model support and can parse/print WAT for nested modules and components. For module linking and WIT, tools like `wasm-tools component print` can disassemble .wasm components to a textual form (WIT or similar).
+* **Bytecode Alliance `jco`**: As noted, `jco` is specialized for components and interface types. Use it when dealing with `.wasm` components rather than core modules.
+* **Emscripten/Browsers**: If your goal is just to run or verify binaries with new features, consider using a WebAssembly runtime (like Wasmtime, Wasmer, or a browser’s experimental flags) to validate the module. For text conversion, though, WABT/Binaryen remain the primary tools.
+
+## Conclusion
+
+**WABT.js (latest)** supports all stable WebAssembly features and *most* proposals in progress for basic assemble/disassemble tasks. Nearly everything listed in the proposals table is either on by default or available behind a flag. Notably, **threads, SIMD, tail calls, memory64, multi-memory, extended const, etc., work in both directions.** The limitations lie with **newer or complex proposals (EH v4, GC, module linking, component model)**, where WABT is catching up. It can handle binaries containing those sections by preserving the data (so you won’t lose anything in translation), but it may not understand the semantics. For full fidelity with those features today, **supplement WABT.js with newer toolchains or wait for WABT updates**.
+
+Each proposal’s status in WABT.js can be summarized as: **Assemble (WAT→WASM)** and **Disassemble (WASM→WAT)** ✅ for stable and older proposals, and ⚠️ or ❌ for those still under development. In practice, WABT.js remains a crucial tool for WebAssembly, but awareness of its gaps ensures you choose the right tool or flag for bleeding-edge features.
