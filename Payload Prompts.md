@@ -2,12 +2,11 @@
 
 ## Standard Wasm Sections
 
-1. **Custom**
+1. **Custom:**
 
    ```text
    Using Type Section Payload Breakdown Template.md as the master outline,
    please generate a Custom section payload breakdown.
-   
    ```
 
 2. **Type**
