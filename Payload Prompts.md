@@ -1,5 +1,3 @@
-1. Custom
-> Using Type Section Payload Breakdown Template.md as the master outline, please generate a Custom section payload breakdown
- ```text
+> 1. Custom
 Using Type Section Payload Breakdown Template.md as the master outline, please generate a Custom section payload breakdown.
 ```
